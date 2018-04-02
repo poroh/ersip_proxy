@@ -1,1 +1,2 @@
-# ersip_proxy
+# Erlang SIP Proxy Sample
+
