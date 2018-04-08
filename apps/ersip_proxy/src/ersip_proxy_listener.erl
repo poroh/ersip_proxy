@@ -43,7 +43,7 @@ start_link(Config) ->
 
 init(Config) ->
     ok = nkpacket:register_protocol(ersip, ersip_proxy_conn),
-    Address   = maps:get(address,   Config, "0.0.0.0"),
+    Address   = maps:get(address,   Config, inet:ntoa(first_ipv4())),
     Port      = maps:get(port,      Config, 5060),
     Transport = maps:get(transport, Config, udp),
 
@@ -51,32 +51,33 @@ init(Config) ->
     TransportStr = atom_to_list(Transport),
 
     URI = "<ersip://" ++ Address ++ ":" ++ PortStr ++ ";transport=" ++ TransportStr ++ ">",
-    lager:info("SIP protocol listener will be initailized at ~s:~s", [ Address, PortStr ]),
+    lager:info("SIP protocol listener will be initailized at ~s:~s", [Address, PortStr]),
     { ok, ListenId } =
         nkpacket:start_listener(
           URI,
-          #{ user  => self(),
-             class => ersip,
-             ws_proto => <<"sip">>
+          #{user  => self(),
+            class => ersip,
+            ws_proto => <<"sip">>
            }),
-    State = #state{ listen_id = ListenId,
-                    config = Config },
-    { ok, State }.
+    State = #state{listen_id = ListenId,
+                   config = Config
+                  },
+    {ok, State}.
 
 handle_call(Request, _, State) ->
     lagger:error("Unexpected call: ~p", [ Request ]),
-    { reply, ok, State }.
+    {reply, ok, State}.
 
 handle_cast(Request, State) ->
     lagger:error("Unexpected cast: ~p", [ Request ]),
-    { noreply, State }.
+    {noreply, State}.
 
 handle_info(Request, State) ->
     lagger:error("Unexpected info: ~p", [ Request ]),
-    { noreply, State }.
+    {noreply, State}.
 
 code_change(_, _, State) ->
-    { noreply, State }.
+    {noreply, State}.
 
 terminate(_, _State) ->
     ok.
@@ -89,3 +90,16 @@ terminate(_, _State) ->
 listen_init(NkPort) ->
     { ok, _Class, Pid } = nkpacket:get_user(NkPort),
     { ok, Pid }.
+
+
+first_ipv4() ->
+    {ok, IfAddrs} = inet:getifaddrs(),
+    NonLoopbackAndUp
+        = lists:append(
+            [ proplists:get_all_values(addr, Attrs)
+              || { ok, List } <- [ inet:getifaddrs()],
+                 { _Name, Attrs } <- List,
+                 lists:member(up, proplists:get_value(flags, Attrs)),
+                 not lists:member(loopback, proplists:get_value(flags, Attrs)) ]),
+    IpV4 = [Addr || {_, _, _, _} = Addr <- NonLoopbackAndUp],
+    hd(IpV4).
