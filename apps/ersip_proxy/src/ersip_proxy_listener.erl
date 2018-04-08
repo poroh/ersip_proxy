@@ -56,20 +56,23 @@ init(Config) ->
         nkpacket:start_listener(
           URI,
           #{ user  => self(),
-             class => self(),
+             class => ersip,
              ws_proto => <<"sip">>
            }),
     State = #state{ listen_id = ListenId,
                     config = Config },
     { ok, State }.
 
-handle_call(_, _, State) ->
+handle_call(Request, _, State) ->
+    lagger:error("Unexpected call: ~p", [ Request ]),
     { reply, ok, State }.
 
-handle_cast(_, State) ->
+handle_cast(Request, State) ->
+    lagger:error("Unexpected cast: ~p", [ Request ]),
     { noreply, State }.
 
-handle_info(_, State) ->
+handle_info(Request, State) ->
+    lagger:error("Unexpected info: ~p", [ Request ]),
     { noreply, State }.
 
 code_change(_, _, State) ->

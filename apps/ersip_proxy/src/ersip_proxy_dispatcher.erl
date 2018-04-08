@@ -45,9 +45,9 @@ processing_stateless(Message, ProxyOptions) ->
         { ok, SipMsg } ->
             SipMsg1 = ersip_proxy_common:process_route_info(SipMsg, ProxyOptions),
             Target = stateless_target(SipMsg1),
-            lager:info("Forward message to target: ~p", [ Target ]),
-            SipMsg2 = ersip_proxy_common:forward_request(Target, SipMsg1, ProxyOptions),
-            io:format("Sending:~n~s~n", [ ersip_sipmsg:serialize_bin(SipMsg2) ] );
+            lager:info("Forward message to target: ~s", [ ersip_uri:assemble(Target) ]),
+            { SipMsg2, #{ nexthop := NexthopURI } } = ersip_proxy_common:forward_request(Target, SipMsg1, ProxyOptions),
+            ersip_proxy_conn:send(NexthopURI, SipMsg2);
         { reply, SipMsg } ->
             lager:info("Message reply ~p", [ SipMsg ]);
         { error, Reason } ->
