@@ -93,13 +93,13 @@ listen_init(NkPort) ->
 
 
 first_ipv4() ->
-    {ok, IfAddrs} = inet:getifaddrs(),
     NonLoopbackAndUp
         = lists:append(
-            [ proplists:get_all_values(addr, Attrs)
-              || { ok, List } <- [ inet:getifaddrs()],
-                 { _Name, Attrs } <- List,
-                 lists:member(up, proplists:get_value(flags, Attrs)),
-                 not lists:member(loopback, proplists:get_value(flags, Attrs)) ]),
+            [proplists:get_all_values(addr, Attrs)
+             || {ok, List} <- [inet:getifaddrs()],
+                {_Name, Attrs} <- List,
+                lists:member(up, proplists:get_value(flags, Attrs)),
+                not lists:member(loopback, proplists:get_value(flags, Attrs))
+            ]),
     IpV4 = [Addr || {_, _, _, _} = Addr <- NonLoopbackAndUp],
     hd(IpV4).
