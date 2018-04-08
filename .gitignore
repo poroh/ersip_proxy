@@ -6,5 +6,9 @@ deps
 erl_crash.dump
 ebin/*.beam
 rel/example_project
+_build
+_checkouts
+rebar.lock
 .concrete/DEV_MODE
 .rebar
+log

@@ -1,0 +1,6 @@
+-sname ersip_proxy
+
+-setcookie ersip_proxy_cookie
+
++K true
++A30
