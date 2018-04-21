@@ -29,23 +29,23 @@ start_link() ->
 %% Child :: {Id,StartFunc,Restart,Shutdown,Type,Modules}
 init([]) ->
     SupFlags = #{
-        strategy  => one_for_one,
-        intensity => 0,
-        period    => 1
-    },
+      strategy  => one_for_one,
+      intensity => 0,
+      period    => 1
+     },
     Supervisors = [
-        ersip_proxy_listener_sup,
-        ersip_proxy_stateless_sup
-    ],
+                   ersip_proxy_listener_sup,
+                   ersip_proxy_stateless_sup
+                  ],
     ChildSpecs = [
-        #{
-            id    => Module,
-            start => { Module, start_link, [] },
-            type  => supervisor
-        }
-        || Module <- Supervisors
-    ],
-    { ok, { SupFlags, ChildSpecs } }.
+                  #{
+                     id    => Module,
+                     start => {Module, start_link, []},
+                     type  => supervisor
+                   }
+                  || Module <- Supervisors
+                 ],
+    {ok, {SupFlags, ChildSpecs}}.
 
 %%====================================================================
 %% Internal functions

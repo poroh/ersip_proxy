@@ -30,20 +30,20 @@ start_link() ->
 %% Child :: {Id,StartFunc,Restart,Shutdown,Type,Modules}
 init([]) ->
     SupFlags = #{
-        strategy  => one_for_one,
-        intensity => 5,
-        period    => 10
-    },
+      strategy  => one_for_one,
+      intensity => 5,
+      period    => 10
+     },
     Listeners  = application:get_env(ersip_proxy, listeners, []),
     ChildSpecs = [
-        #{
-            id    => Id,
-            start => { ersip_proxy_listener, start_link, [ Config ] },
-            type  => supervisor
-        }
-        || { Id, Config } <- Listeners
-    ],
-    { ok, { SupFlags, ChildSpecs } }.
+                  #{
+                     id    => Id,
+                     start => {ersip_proxy_listener, start_link, [Config]},
+                     type  => supervisor
+                   }
+                  || {Id, Config} <- Listeners
+                 ],
+    {ok, {SupFlags, ChildSpecs}}.
 
 %%====================================================================
 %% Internal functions

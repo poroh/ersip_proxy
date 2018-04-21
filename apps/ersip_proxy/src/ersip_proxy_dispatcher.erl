@@ -8,7 +8,7 @@
 
 -module(ersip_proxy_dispatcher).
 
--export([ new_message/1 ]).
+-export([new_message/1]).
 
 
 %%====================================================================
@@ -46,7 +46,7 @@ processing_stateless(Message, ProxyOptions) ->
             SipMsg1 = ersip_proxy_common:process_route_info(SipMsg, ProxyOptions),
             Target = stateless_target(SipMsg1),
             lager:info("Forward message to target: ~s", [ersip_uri:assemble(Target)]),
-            { SipMsg2, #{ nexthop := NexthopURI } } = ersip_proxy_common:forward_request(Target, SipMsg1, ProxyOptions),
+            {SipMsg2, #{nexthop := NexthopURI}} = ersip_proxy_common:forward_request(Target, SipMsg1, ProxyOptions),
             ersip_proxy_conn:send(NexthopURI, SipMsg2);
         {reply, SipMsg} ->
             lager:info("Message reply ~p", [SipMsg]);

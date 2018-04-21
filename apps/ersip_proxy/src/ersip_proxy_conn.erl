@@ -27,7 +27,7 @@ send(NextURI, SipMsg) ->
     PortBin = integer_to_binary(Port),
     TransportBin =
         case ersip_uri:params(NextURI) of
-            #{ transport := Transport } ->
+            #{transport := Transport} ->
                 ersip_transport:to_binary(Transport);
             _ ->
                 <<"udp">>
@@ -53,10 +53,10 @@ conn_init(NkPort) ->
                [inet:ntoa(RemoteIP), RemotePort,
                 Transport
                ]),
-    { ok, SIPConn }.
+    {ok, SIPConn}.
 
 conn_parse(Data, _NkPort, SIPConn) ->
-    { NextSIPConn, SE } = ersip_conn:conn_data(Data, SIPConn),
+    {NextSIPConn, SE} = ersip_conn:conn_data(Data, SIPConn),
     lists:foreach(fun process_side_effect/1, SE),
     case need_disconnect(SE) of
         true ->
@@ -75,15 +75,15 @@ conn_encode(SipMsg, _NkPort, SIPConn) ->
     {ok, BinMSG, SIPConn1}.
 
 conn_handle_call(Request, _From, _NkPort, SIPConn) ->
-    lager:error("Unexpected request: ~p", [ Request ]),
+    lager:error("Unexpected request: ~p", [Request]),
     {ok, SIPConn}.
 
-process_side_effect({ bad_message, Data, Reason }) ->
+process_side_effect({bad_message, Data, Reason}) ->
     lager:warning("Bad message received: ~p: ~p", [Reason, Data]);
-process_side_effect({ new_message, RawMsg }) ->
+process_side_effect({new_message, RawMsg}) ->
     lager:info("New message received: ~n~s~n", [ersip_msg:serialize(RawMsg)]),
     ersip_proxy_dispatcher:new_message(RawMsg);
-process_side_effect({ disconnect, Error }) ->
+process_side_effect({disconnect, Error}) ->
     lager:info("Connection disconnect required: ~p", [Error]).
 
 need_disconnect(SideEffects) ->
