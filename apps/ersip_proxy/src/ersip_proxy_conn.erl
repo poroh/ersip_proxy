@@ -22,7 +22,7 @@
 %%%===================================================================
 
 
-send_request(NextURI, SipMsg) ->
+send_request(NextURI, OutReq) ->
     [{host, Host}, {port, Port}] = ersip_uri:get([host, port], NextURI),
     HostBin = iolist_to_binary(ersip_host:assemble(Host)),
     PortBin =
@@ -42,7 +42,7 @@ send_request(NextURI, SipMsg) ->
     URI = <<"<ersip:", HostBin/binary, ":", PortBin/binary, ";transport=", TransportBin/binary, ">">>,
     {ok, _Pid} =
         nkpacket:send(URI,
-                      SipMsg,
+                      {request, OutReq},
                       #{udp_to_tcp => false,
                         udp_max_size => 9000,
                         class => ersip
@@ -65,7 +65,7 @@ send_response(TargetVia, _RecvVia, SipMsg) ->
     URI = <<"<ersip:", HostBin/binary, ":", PortBin/binary, ";transport=", TransportBin/binary, ">">>,
     {ok, _Pid} =
         nkpacket:send(URI,
-                      SipMsg,
+                      {response, SipMsg},
                       #{udp_to_tcp => false,
                         class => ersip
                        }).
@@ -95,20 +95,16 @@ conn_parse(Data, _NkPort, SIPConn) ->
             {ok, NextSIPConn}
     end.
 
-conn_encode(SipMsg, _NkPort, SIPConn) ->
-    SIPConn1 = SIPConn,
-    Branch = ersip_proxy_stateless:branch(SipMsg),
+conn_encode({request, OutReq}, _NkPort, SIPConn) ->
+    IOMsg = ersip_request:send_via_conn(OutReq, SIPConn),
+    BinMSG = iolist_to_binary(IOMsg),
+    lager:info("Sending request: ~n~s~n", [BinMSG]),
+    {ok, BinMSG, SIPConn};
+conn_encode({response, SipMsg}, _NkPort, SIPConn) ->
     RawMsg  = ersip_sipmsg:raw_message(SipMsg),
-    RawMsg1 =
-        case ersip_msg:get(type, RawMsg) of
-            request ->
-                ersip_conn:add_via(RawMsg, Branch, SIPConn);
-            response ->
-                RawMsg
-        end,
-    BinMSG = ersip_msg:serialize_bin(RawMsg1),
-    lager:info("Sending message: ~n~s~n", [BinMSG]),
-    {ok, BinMSG, SIPConn1}.
+    BinMSG = ersip_msg:serialize_bin(RawMsg),
+    lager:info("Sending response: ~n~s~n", [BinMSG]),
+    {ok, BinMSG, SIPConn}.
 
 conn_handle_call(Request, _From, _NkPort, SIPConn) ->
     lager:error("Unexpected request: ~p", [Request]),
