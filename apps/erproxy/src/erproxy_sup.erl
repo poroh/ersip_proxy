@@ -33,19 +33,22 @@ init([]) ->
       intensity => 0,
       period    => 1
      },
-    Supervisors = [
-                   erproxy_listener_sup,
-                   erproxy_trans_sup
+    Supervisors = [erproxy_listener_sup,
+                   erproxy_trans_sup,
+                   erproxy_stateful_sup
                   ],
-    ChildSpecs = [
-                  #{
-                     id    => Module,
-                     start => {Module, start_link, []},
-                     type  => supervisor
-                   }
-                  || Module <- Supervisors
+    Servers = [{erproxy_branch, []}],
+    SupSpecs = [#{id    => Module,
+                  start => {Module, start_link, []},
+                  type  => supervisor
+                 } || Module <- Supervisors
                  ],
-    {ok, {SupFlags, ChildSpecs}}.
+    ModSpecs = [#{id    => Server,
+                  start => {Server, start_link, ServerArgs},
+                  type  => worker
+                 } || {Server, ServerArgs} <- Servers
+               ],
+    {ok, {SupFlags, SupSpecs ++ ModSpecs}}.
 
 %%====================================================================
 %% Internal functions

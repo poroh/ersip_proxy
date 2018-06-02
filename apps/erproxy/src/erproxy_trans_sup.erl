@@ -11,7 +11,8 @@
 -behaviour(supervisor).
 
 -export([start_link/0,
-         start_trans/3,
+         start_server_trans/2,
+         start_client_trans/2,
          init/1
         ]).
 
@@ -21,8 +22,11 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-start_trans(Type, TUCallback, Args) ->
-    {ok, _Pid} = supervisor:start_child(?MODULE, [Type, TUCallback, Args]).
+start_server_trans(TUCallback, Args) ->
+    {ok, _Pid} = supervisor:start_child(?MODULE, [server, TUCallback, Args]).
+
+start_client_trans(TUCallback, Args) ->
+    {ok, _Pid} = supervisor:start_child(?MODULE, [client, TUCallback, Args]).
 
 %%====================================================================
 %% Supervisor callbacks

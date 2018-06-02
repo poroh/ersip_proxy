@@ -8,8 +8,8 @@
 
 -module(erproxy_conn).
 
--export([send_request/2,
-         send_response/3,
+-export([send_request/1,
+         send_response/1,
          conn_init/1,
          conn_parse/3,
          conn_encode/3,
@@ -21,8 +21,8 @@
 %%% API
 %%%===================================================================
 
-
-send_request(NextURI, OutReq) ->
+send_request(OutReq) ->
+    NextURI = ersip_request:nexthop(OutReq),
     [{host, Host}, {port, Port}] = ersip_uri:get([host, port], NextURI),
     HostBin = iolist_to_binary(ersip_host:assemble(Host)),
     PortBin =
@@ -48,7 +48,8 @@ send_request(NextURI, OutReq) ->
                         class => ersip
                        }).
 
-send_response(TargetVia, _RecvVia, SipMsg) ->
+send_response(SipMsg) ->
+    TargetVia = ersip_sipmsg:get(topmost_via, SipMsg),
     Target =
         case ersip_response:target(TargetVia) of
             {reuse, FallbackTarget} ->

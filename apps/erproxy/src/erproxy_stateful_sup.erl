@@ -3,7 +3,7 @@
 %% All rights reserved.
 %% Distributed under the terms of the MIT License. See the LICENSE file.
 %%
-%% One listener of SIP proxy
+%% Stateful proxy supervisor
 %%
 
 -module(erproxy_stateful_sup).

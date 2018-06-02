@@ -12,7 +12,10 @@
 
 -export([start_link/3,
          find_server_trans/1,
-         request/2
+         find_client_trans/2,
+         recv_request/2,
+         recv_response/2,
+         send_response/2
         ]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
@@ -31,13 +34,29 @@ start_link(Type, TUCallback, Args) ->
                    tu_callback = TUCallback
                   },
     Id = ersip_trans:id(Trans),
+    lager:info("Starting ~p transaction with id: ~p", [Type, Id]),
     gen_server:start_link({global, {?MODULE, Id}}, ?MODULE, [State, SE], []).
 
-request(InSipMsg, Pid) ->
+recv_request(InSipMsg, Pid) ->
     gen_server:call(Pid, {received, InSipMsg}).
+
+recv_response(SipMsg, Pid) ->
+    gen_server:call(Pid, {received, SipMsg}).
+
+send_response(SipMsg, Pid) ->
+    gen_server:call(Pid, {send, SipMsg}).
 
 find_server_trans(InSipMsg) ->
     TransId = ersip_trans:server_id(InSipMsg),
+    case global:whereis_name({?MODULE, TransId}) of
+        undefined ->
+            error;
+        Pid when is_pid(Pid) ->
+            {ok, Pid}
+    end.
+
+find_client_trans(RecvVia, SipMsg) ->
+    TransId = ersip_trans:client_id(RecvVia, SipMsg),
     case global:whereis_name({?MODULE, TransId}) of
         undefined ->
             error;
@@ -54,6 +73,10 @@ init([State, SE]) ->
     {ok, State}.
 
 handle_call({received, _SipMsg} = Ev, _From, #state{trans = Trans} = State) ->
+    {NewTrans, SE} = ersip_trans:event(Ev, Trans),
+    cast_se(SE),
+    {reply, ok, State#state{trans = NewTrans}};
+handle_call({send, _SipMsg} = Ev, _From, #state{trans = Trans} = State) ->
     {NewTrans, SE} = ersip_trans:event(Ev, Trans),
     cast_se(SE),
     {reply, ok, State#state{trans = NewTrans}};
@@ -105,7 +128,11 @@ process_se({set_timer, {Timeout, TimerEvent}}, State) ->
     {continue, State};
 process_se({clear_trans, _}, State) ->
     {stop, State};
-process_se({send, Message}, State) ->
+process_se({send_request, OutReq}, State) ->
+    erproxy_conn:send_request(OutReq),
+    {continue, State};
+process_se({send_response, SipMsg}, State) ->
+    erproxy_conn:send_response(SipMsg),
     {continue, State}.
 
 cast_se(SE) ->
@@ -127,5 +154,5 @@ call_callback(CB, Args) ->
         end
     catch
         Type:Error ->
-            lager:error("Transaction user error: ~p:~p", [Type, Error])
+            lager:error("Transaction user error: ~p:~p", [Type, {Error,  erlang:get_stacktrace()}])
     end.
