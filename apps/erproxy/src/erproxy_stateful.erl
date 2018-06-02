@@ -28,7 +28,8 @@
 -record(state, {server        :: pid(),       %% Server transaction
                 server_ref    :: reference(), %% Server transaction monitor reference
                 client        :: pid(),       %% Client transaction
-                client_ref    :: reference()  %% Client transaction monitor reference
+                client_ref    :: reference(), %% Client transaction monitor reference
+                sipmsg        :: ersip_sipmsg:sipmsg()
                }).
 
 %%%===================================================================
@@ -69,6 +70,9 @@ response(RecvVia, Message) ->
 server_trans_result(SipMsg, ProxyOptions, Pid) ->
     gen_server:cast(Pid, {request, SipMsg, ProxyOptions}).
 
+client_trans_result(timeout, Pid) ->
+    lager:info("Client transaction timeout", []),
+    gen_server:cast(Pid, client_timeout);
 client_trans_result(SipMsg, Pid) ->
     lager:info("Client transaction result", []),
     gen_server:cast(Pid, {response, SipMsg}).
@@ -83,7 +87,7 @@ start_link(Message, ProxyOptions) ->
 init([{sipmsg, SipMsg}, {options, ProxyOptions}]) ->
     lager:info("new stateful proxy process started", []),
     gen_server:cast(self(), {start, SipMsg, ProxyOptions}),
-    {ok, #state{}}.
+    {ok, #state{sipmsg = SipMsg}}.
 
 handle_call(Request, _From, State) ->
     lager:error("Unexpected call ~p", [Request]),
@@ -97,22 +101,36 @@ handle_cast({request, SipMsg, ProxyOptions}, State) ->
     %% Pass message through the proxy
     OutReq = pass_message(SipMsg, ProxyOptions),
     State1 = start_client_trans(OutReq, ProxyOptions, State),
+    Trying = ersip_sipmsg:reply(100, SipMsg),
+    erproxy_trans:send_response(Trying, State1#state.server),
     {noreply, State1};
 handle_cast({response, SipMsg}, #state{server = Pid} = State) ->
     lager:info("Sending response to the request intiator", []),
-    
+    erproxy_trans:send_response(SipMsg, Pid),
+    {noreply, State};
+handle_cast(client_timeout, #state{server = Pid, sipmsg = Req} = State) ->
+    lager:info("Sending response to the request intiator", []),
+    %%   In some cases, the response returned by the transaction layer will
+    %% not be a SIP message, but rather a transaction layer error.  When a
+    %% timeout error is received from the transaction layer, it MUST be
+    %% treated as if a 408 (Request Timeout) status code has been received.
+    SipMsg = ersip_sipmsg:reply(408, Req),
     erproxy_trans:send_response(SipMsg, Pid),
     {noreply, State};
 handle_cast(Request, State) ->
     lager:error("Unexpected cast ~p", [Request]),
     {noreply, State}.
 
+handle_info({'DOWN', Ref, process, _, _}, #state{server_ref = Ref} = State) ->
+    {noreply, State};
+handle_info({'DOWN', Ref, process, _, _}, #state{client_ref = Ref} = State) ->
+    {stop, normal, State};
 handle_info(Info, State) ->
     lager:error("Unexpected info ~p", [Info]),
     {noreply, State}.
 
 terminate(Reason, _State) ->
-    lager:info("Terminated with reason ~p", [Reason]),
+    lager:info("Proxy: terminated with reason ~p", [Reason]),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -132,7 +150,7 @@ start_server_trans(SipMsg, ProxyOptions, #state{} = State) ->
 start_client_trans(OutReq, ProxyOptions, State) ->
     TUMFA = {?MODULE, client_trans_result, [self()]},
     %% Creating server transaction:
-    {ok, Pid} = erproxy_trans_sup:start_client_trans(TUMFA, {OutReq, {transport, udp}, ProxyOptions}),
+    {ok, Pid} = erproxy_trans_sup:start_client_trans(TUMFA, {OutReq, ProxyOptions}),
     Ref = erlang:monitor(process, Pid),
     State#state{client = Pid, client_ref = Ref}.
 
@@ -144,8 +162,7 @@ pass_message(SipMsg, ProxyOptions) ->
     {SipMsg2, #{nexthop := NexthopURI}} = ersip_proxy_common:forward_request(Target, SipMsg1, ProxyOptions),
     lager:info("Nexthop is: ~s", [ersip_uri:assemble(NexthopURI)]),
     Branch = erproxy_branch:generate(),
-    OutReq = ersip_request:new(SipMsg2, Branch),
-    ersip_request:set_nexthop(NexthopURI, OutReq).
+    ersip_request:new(SipMsg2, Branch, NexthopURI).
 
 stateful_target(SipMsg) ->
     ersip_sipmsg:ruri(SipMsg).

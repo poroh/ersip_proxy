@@ -126,7 +126,11 @@ process_se({tu_result, SipMsg}, #state{tu_callback = CB} = State) ->
 process_se({set_timer, {Timeout, TimerEvent}}, State) ->
     erlang:send_after(Timeout, self(), {event, TimerEvent}),
     {continue, State};
-process_se({clear_trans, _}, State) ->
+process_se({clear_trans, timeout}, #state{tu_callback = CB} = State) ->
+    call_callback(CB, [timeout]),
+    {stop, State};
+process_se({clear_trans, Reason}, State) ->
+    lager:info("Transaction is cleared: ~p", [Reason]),
     {stop, State};
 process_se({send_request, OutReq}, State) ->
     erproxy_conn:send_request(OutReq),
@@ -138,8 +142,8 @@ process_se({send_response, SipMsg}, State) ->
 cast_se(SE) ->
     gen_server:cast(self(), {process_se, SE}).
 
-create_transaction(client, {OutReq, Transport, Options}) ->
-    ersip_trans:new_client(OutReq, Transport, Options);
+create_transaction(client, {OutReq, Options}) ->
+    ersip_trans:new_client(OutReq, Options);
 create_transaction(server, {SipMsg, Options}) ->
     ersip_trans:new_server(SipMsg, Options).
 

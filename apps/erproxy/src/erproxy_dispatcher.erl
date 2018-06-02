@@ -61,9 +61,8 @@ stateless_request(Message, ProxyOptions) ->
             lager:info("Forward message to target: ~s", [ersip_uri:assemble(Target)]),
             {SipMsg2, #{nexthop := NexthopURI}} = ersip_proxy_common:forward_request(Target, SipMsg1, ProxyOptions),
             lager:info("Nexthop is: ~s", [ersip_uri:assemble(NexthopURI)]),
-            OutReq = ersip_request:new_stateless_proxy(SipMsg2),
-            OutReq1 = ersip_request:set_nexthop(OutReq),
-            erproxy_conn:send_request(OutReq1);
+            OutReq = ersip_request:new_stateless_proxy(SipMsg2, Target),
+            erproxy_conn:send_request(OutReq);
         {reply, SipMsg2} ->
             lager:info("Message reply ~p", [SipMsg2]),
             spawn_link(fun() ->
