@@ -6,7 +6,7 @@
 %% Stateless proxy worker supervisor
 %%
 
--module(ersip_proxy_dispatcher).
+-module(erproxy_dispatcher).
 
 -export([new_request/1,
          new_response/2]).
@@ -30,7 +30,9 @@ new_response(RecvVia, Message) ->
 process_request(Message) ->
     case processing_type(Message) of
         {stateless, ProxyOptions} ->
-            stateless_request(Message, ProxyOptions)
+            stateless_request(Message, ProxyOptions);
+        {stateful, ProxyOptions} ->
+            statefull_request(Message, ProxyOptions)
     end.
 
 process_response(RecvVia, Message) ->
@@ -53,12 +55,12 @@ stateless_request(Message, ProxyOptions) ->
             {SipMsg2, #{nexthop := NexthopURI}} = ersip_proxy_common:forward_request(Target, SipMsg1, ProxyOptions),
             lager:info("Nexthop is: ~s", [ersip_uri:assemble(NexthopURI)]),
             OutReq = ersip_request:new_stateless_proxy(SipMsg2),
-            ersip_proxy_conn:send_request(NexthopURI, OutReq);
+            erproxy_conn:send_request(NexthopURI, OutReq);
         {reply, SipMsg2} ->
             lager:info("Message reply ~p", [SipMsg2]),
             TargetVia = ersip_sipmsg:get(topmost_via, SipMsg2),
             spawn_link(fun() ->
-                               ersip_proxy_conn:send_response(TargetVia, undefined, SipMsg2)
+                               erproxy_conn:send_response(TargetVia, undefined, SipMsg2)
                        end);
         {error, Reason} ->
             lager:warning("Error occured during processing: ~p", [Reason])
@@ -68,10 +70,41 @@ stateless_response(RecvVia, Message) ->
     case ersip_proxy_stateless:process_response(RecvVia, Message) of
         {forward, TargetVia, SipMsg} ->
             lager:info("Forward response to ~p", [TargetVia]),
-            ersip_proxy_conn:send_response(TargetVia, RecvVia, SipMsg);
+            erproxy_conn:send_response(TargetVia, RecvVia, SipMsg);
         {drop, Reason} ->
             lager:warning("Cannot forward message: ~p", [Reason])
     end.
 
 stateless_target(SipMsg) ->
     ersip_sipmsg:ruri(SipMsg).
+
+
+statefull_request(Message, ProxyOptions) ->
+    case ersip_proxy_common:request_validation(Message, ProxyOptions) of
+        {ok, SipMsg} ->
+            case erproxy_trans:find_server_trans(SipMsg) of
+                error ->
+                    lager:info("Transaction is not found creating new one", []),
+                    TaggedOptions = {proxy_options, ProxyOptions},
+                    SipMsg1 = ersip_sipmsg:set_user_data(TaggedOptions, SipMsg),
+                    %% Transaction user MFA:
+                    TUMFA = {erproxy_stateful, process, [ProxyOptions]},
+                    erproxy_trans_sup:start_trans(server,  TUMFA, {SipMsg1, ProxyOptions});
+                {ok, Trans} ->
+                    erproxy_trans:request(SipMsg, Trans)
+            end;
+        {reply, SipMsg2} ->
+            lager:info("Message reply ~p", [SipMsg2]),
+            TargetVia = ersip_sipmsg:get(topmost_via, SipMsg2),
+            spawn_link(fun() ->
+                               erproxy_conn:send_response(TargetVia, undefined, SipMsg2)
+                       end);
+        {error, Reason} ->
+            lager:warning("Error occured during processing: ~p", [Reason])
+    end.
+
+statefull_tu(SipMsg) ->
+    {proxy_options, ProxyOptions} = ersip_sipmsg:user_data(SipMsg),
+    SipMsg1 = ersip_sipmsg:clear_user_data(SipMsg),
+    erproxy_stateful_sup:start_proxy(SipMsg1, ProxyOptions),
+    ok.

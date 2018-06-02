@@ -1,17 +1,9 @@
-%%
-%% Copyright (c) 2018 Dmitry Poroh
-%% All rights reserved.
-%% Distributed under the terms of the MIT License. See the LICENSE file.
-%%
-%% Stateless proxy worker supervisor
-%%
-
 %%%-------------------------------------------------------------------
-%% @doc ersip_proxy top level supervisor.
+%% @doc erproxy top level supervisor.
 %% @end
 %%%-------------------------------------------------------------------
 
--module(ersip_proxy_stateless_sup).
+-module(erproxy_sup).
 
 -behaviour(supervisor).
 
@@ -36,7 +28,24 @@ start_link() ->
 
 %% Child :: {Id,StartFunc,Restart,Shutdown,Type,Modules}
 init([]) ->
-    {ok, {{one_for_all, 0, 1}, []}}.
+    SupFlags = #{
+      strategy  => one_for_one,
+      intensity => 0,
+      period    => 1
+     },
+    Supervisors = [
+                   erproxy_listener_sup,
+                   erproxy_trans_sup
+                  ],
+    ChildSpecs = [
+                  #{
+                     id    => Module,
+                     start => {Module, start_link, []},
+                     type  => supervisor
+                   }
+                  || Module <- Supervisors
+                 ],
+    {ok, {SupFlags, ChildSpecs}}.
 
 %%====================================================================
 %% Internal functions

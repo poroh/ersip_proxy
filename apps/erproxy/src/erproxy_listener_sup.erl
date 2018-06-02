@@ -1,9 +1,12 @@
-%%%-------------------------------------------------------------------
-%% @doc ersip_proxy top level supervisor.
-%% @end
-%%%-------------------------------------------------------------------
+%%
+%% Copyright (c) 2018 Dmitry Poroh
+%% All rights reserved.
+%% Distributed under the terms of the MIT License. See the LICENSE file.
+%%
+%% Stateless proxy worker supervisor
+%%
 
--module(ersip_proxy_sup).
+-module(erproxy_listener_sup).
 
 -behaviour(supervisor).
 
@@ -13,14 +16,12 @@
 %% Supervisor callbacks
 -export([init/1]).
 
--define(SERVER, ?MODULE).
-
 %%====================================================================
 %% API functions
 %%====================================================================
 
 start_link() ->
-    supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 %%====================================================================
 %% Supervisor callbacks
@@ -30,20 +31,17 @@ start_link() ->
 init([]) ->
     SupFlags = #{
       strategy  => one_for_one,
-      intensity => 0,
-      period    => 1
+      intensity => 5,
+      period    => 10
      },
-    Supervisors = [
-                   ersip_proxy_listener_sup,
-                   ersip_proxy_stateless_sup
-                  ],
+    Listeners  = application:get_env(erproxy, listeners, []),
     ChildSpecs = [
                   #{
-                     id    => Module,
-                     start => {Module, start_link, []},
+                     id    => Id,
+                     start => {erproxy_listener, start_link, [Config]},
                      type  => supervisor
                    }
-                  || Module <- Supervisors
+                  || {Id, Config} <- Listeners
                  ],
     {ok, {SupFlags, ChildSpecs}}.
 

@@ -6,7 +6,12 @@
 %% Stateless proxy worker supervisor
 %%
 
--module(ersip_proxy_listener_sup).
+%%%-------------------------------------------------------------------
+%% @doc erproxy top level supervisor.
+%% @end
+%%%-------------------------------------------------------------------
+
+-module(erproxy_stateless_sup).
 
 -behaviour(supervisor).
 
@@ -16,12 +21,14 @@
 %% Supervisor callbacks
 -export([init/1]).
 
+-define(SERVER, ?MODULE).
+
 %%====================================================================
 %% API functions
 %%====================================================================
 
 start_link() ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+    supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 %%====================================================================
 %% Supervisor callbacks
@@ -29,21 +36,7 @@ start_link() ->
 
 %% Child :: {Id,StartFunc,Restart,Shutdown,Type,Modules}
 init([]) ->
-    SupFlags = #{
-      strategy  => one_for_one,
-      intensity => 5,
-      period    => 10
-     },
-    Listeners  = application:get_env(ersip_proxy, listeners, []),
-    ChildSpecs = [
-                  #{
-                     id    => Id,
-                     start => {ersip_proxy_listener, start_link, [Config]},
-                     type  => supervisor
-                   }
-                  || {Id, Config} <- Listeners
-                 ],
-    {ok, {SupFlags, ChildSpecs}}.
+    {ok, {{one_for_all, 0, 1}, []}}.
 
 %%====================================================================
 %% Internal functions

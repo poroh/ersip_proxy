@@ -6,7 +6,7 @@
 %% One listener of SIP proxy
 %%
 
--module(ersip_proxy_conn).
+-module(erproxy_conn).
 
 -export([send_request/2,
          send_response/3,
@@ -114,10 +114,10 @@ process_side_effect({bad_message, Data, Reason}) ->
     lager:warning("Bad message received: ~p: ~p", [Reason, Data]);
 process_side_effect({new_request, RawMsg}) ->
     lager:info("New request received: ~n~s~n", [ersip_msg:serialize(RawMsg)]),
-    ersip_proxy_dispatcher:new_request(RawMsg);
+    erproxy_dispatcher:new_request(RawMsg);
 process_side_effect({new_response, Via, RawMsg}) ->
     lager:info("New response received: ~n~s~n", [ersip_msg:serialize(RawMsg)]),
-    ersip_proxy_dispatcher:new_response(Via, RawMsg);
+    erproxy_dispatcher:new_response(Via, RawMsg);
 process_side_effect({disconnect, Error}) ->
     lager:info("Connection disconnect required: ~p", [Error]).
 

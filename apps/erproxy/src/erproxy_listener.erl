@@ -6,7 +6,7 @@
 %% One listener of SIP proxy
 %%
 
--module(ersip_proxy_listener).
+-module(erproxy_listener).
 
 -behaviour(gen_server).
 
@@ -42,7 +42,7 @@ start_link(Config) ->
 %%====================================================================
 
 init(Config) ->
-    ok = nkpacket:register_protocol(ersip, ersip_proxy_conn),
+    ok = nkpacket:register_protocol(ersip, erproxy_conn),
     Address   = maps:get(address,   Config, inet:ntoa(first_ipv4())),
     Port      = maps:get(port,      Config, 5060),
     Transport = maps:get(transport, Config, udp),

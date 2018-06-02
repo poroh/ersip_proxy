@@ -1,9 +1,9 @@
 %%%-------------------------------------------------------------------
-%% @doc ersip_proxy public API
+%% @doc erproxy public API
 %% @end
 %%%-------------------------------------------------------------------
 
--module(ersip_proxy_app).
+-module(erproxy_app).
 
 -behaviour(application).
 
@@ -15,7 +15,7 @@
 %%====================================================================
 
 start(_StartType, _StartArgs) ->
-    ersip_proxy_sup:start_link().
+    erproxy_sup:start_link().
 
 %%--------------------------------------------------------------------
 stop(_State) ->
