@@ -67,6 +67,8 @@ response(RecvVia, Message) ->
             Error
     end.
 
+server_trans_result(no_ack, _, Pid) ->
+    gen_server:cast(Pid, server_no_ack);
 server_trans_result(SipMsg, ProxyOptions, Pid) ->
     gen_server:cast(Pid, {request, SipMsg, ProxyOptions}).
 
@@ -95,19 +97,31 @@ handle_call(Request, _From, State) ->
     {reply, Reply, State}.
 
 handle_cast({start, SipMsg, ProxyOptions}, State) ->
-    State1 = start_server_trans(SipMsg, ProxyOptions, State),
-    {noreply, State1};
+    ACK = ersip_method:ack(),
+    case ersip_sipmsg:method(SipMsg) of
+        ACK ->
+            %% There is no client transaction for ACK.  If the TU
+            %% wishes to send an ACK, it passes one directly to the
+            %% transport layer for transmission.
+            OutReq = pass_message(SipMsg, ProxyOptions),
+            erproxy_conn:send_request(OutReq),
+            {stop, normal, SipMsg};
+        _ ->
+            State1 = start_server_trans(SipMsg, ProxyOptions, State),
+            {noreply, State1}
+    end;
 handle_cast({request, SipMsg, ProxyOptions}, State) ->
     %% Pass message through the proxy
     OutReq = pass_message(SipMsg, ProxyOptions),
     State1 = start_client_trans(OutReq, ProxyOptions, State),
-    Trying = ersip_sipmsg:reply(100, SipMsg),
-    erproxy_trans:send_response(Trying, State1#state.server),
     {noreply, State1};
 handle_cast({response, SipMsg}, #state{server = Pid} = State) ->
     lager:info("Sending response to the request intiator", []),
     erproxy_trans:send_response(SipMsg, Pid),
     {noreply, State};
+handle_cast(server_no_ack, #state{} = State) ->
+    lager:info("No ACK received by server transaction", []),
+    {stop, State};
 handle_cast(client_timeout, #state{server = Pid, sipmsg = Req} = State) ->
     lager:info("Sending response to the request intiator", []),
     %%   In some cases, the response returned by the transaction layer will

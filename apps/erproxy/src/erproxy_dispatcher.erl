@@ -32,7 +32,7 @@ process_request(Message) ->
         {stateless, ProxyOptions} ->
             stateless_request(Message, ProxyOptions);
         {stateful, ProxyOptions} ->
-            statefull_request(Message, ProxyOptions)
+            stateful_request(Message, ProxyOptions)
     end.
 
 process_response(RecvVia, Message) ->
@@ -47,11 +47,12 @@ process_response(RecvVia, Message) ->
 
 processing_type(_Message) ->
     RR = ersip_uri:make(<<"sip:192.168.100.11:5090">>),
-    {stateful,
-     #{to_tag => ersip_id:token(crypto:strong_rand_bytes(7)),
-       record_route_uri => RR,
-       check_rroute_fun => fun(X) -> ersip_uri:make_key(X) == ersip_uri:make_key(RR) end
-      }}.
+    ProxyOptions =
+        #{to_tag => ersip_id:token(crypto:strong_rand_bytes(7)),
+          record_route_uri => RR,
+          check_rroute_fun => fun(X) -> ersip_uri:make_key(X) == ersip_uri:make_key(RR) end
+         },
+    {stateful, ProxyOptions}.
 
 stateless_request(Message, ProxyOptions) ->
     case ersip_proxy_common:request_validation(Message, ProxyOptions) of
@@ -84,7 +85,7 @@ stateless_target(SipMsg) ->
     ersip_sipmsg:ruri(SipMsg).
 
 
-statefull_request(Message, ProxyOptions) ->
+stateful_request(Message, ProxyOptions) ->
     case ersip_proxy_common:request_validation(Message, ProxyOptions) of
         {ok, SipMsg} ->
             erproxy_stateful:request(SipMsg, ProxyOptions);

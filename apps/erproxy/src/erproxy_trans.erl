@@ -129,6 +129,9 @@ process_se({set_timer, {Timeout, TimerEvent}}, State) ->
 process_se({clear_trans, timeout}, #state{tu_callback = CB} = State) ->
     call_callback(CB, [timeout]),
     {stop, State};
+process_se({clear_trans, no_ack}, #state{tu_callback = CB} = State) ->
+    call_callback(CB, [no_ack]),
+    {stop, State};
 process_se({clear_trans, Reason}, State) ->
     lager:info("Transaction is cleared: ~p", [Reason]),
     {stop, State};
