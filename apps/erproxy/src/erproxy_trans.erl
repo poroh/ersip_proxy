@@ -69,8 +69,12 @@ find_client_trans(RecvVia, SipMsg) ->
 %%%===================================================================
 
 init([State, SE]) ->
-    cast_se(SE),
-    {ok, State}.
+    case process_se_list(SE, State) of
+        {noreply, State1} ->
+            {ok, State1};
+        {stop, _State1} ->
+            {stop, normal}
+    end.
 
 handle_call({received, _SipMsg} = Ev, _From, #state{trans = Trans} = State) ->
     {NewTrans, SE} = ersip_trans:event(Ev, Trans),
@@ -78,8 +82,12 @@ handle_call({received, _SipMsg} = Ev, _From, #state{trans = Trans} = State) ->
     {reply, ok, State#state{trans = NewTrans}};
 handle_call({send, _SipMsg} = Ev, _From, #state{trans = Trans} = State) ->
     {NewTrans, SE} = ersip_trans:event(Ev, Trans),
-    cast_se(SE),
-    {reply, ok, State#state{trans = NewTrans}};
+    case process_se_list(SE, State#state{trans = NewTrans}) of
+        {noreply, State1} ->
+            {reply, ok, State1};
+        {stop, State1} ->
+            {stop, normal, ok, State1}
+    end;
 handle_call(Request, _From, State) ->
     lager:error("Unexpected call ~p", [Request]),
     Reply = ok,
@@ -93,8 +101,7 @@ handle_cast(Request, State) ->
 
 handle_info({event, TimerEvent}, #state{trans = Trans} = State) ->
     {NewTrans, SE} = ersip_trans:event(TimerEvent, Trans),
-    cast_se(SE),
-    {noreply, State#state{trans = NewTrans}};
+    process_se_list(SE, State#state{trans = NewTrans});
 handle_info(Info, State) ->
     lager:error("Unexpected info ~p", [Info]),
     {noreply, State}.

@@ -29,6 +29,8 @@ new_response(RecvVia, Message) ->
 
 process_request(Message) ->
     case processing_type(Message) of
+        {registrar, RegistrarConfig} ->
+            registrar_request(Message, RegistrarConfig);
         {stateless, ProxyOptions} ->
             stateless_request(Message, ProxyOptions);
         {stateful, ProxyOptions} ->
@@ -45,14 +47,16 @@ process_response(RecvVia, Message) ->
             stateless_response(RecvVia, Message)
     end.
 
-processing_type(_Message) ->
-    RR = ersip_uri:make(<<"sip:192.168.100.11:5090">>),
-    ProxyOptions =
-        #{to_tag => ersip_id:token(crypto:strong_rand_bytes(7)),
-          record_route_uri => RR,
-          check_rroute_fun => fun(X) -> ersip_uri:make_key(X) == ersip_uri:make_key(RR) end
-         },
-    {stateful, ProxyOptions}.
+processing_type(Message) ->
+    REGISTER = ersip_method:register(),
+    case ersip_msg:get(method, Message) of
+        REGISTER ->
+            RegistrarConfig = ersip_registrar:new_config(any, #{}),
+            {registrar, RegistrarConfig};
+        _ ->
+            ProxyOptions = #{to_tag => {tag, ersip_id:token(crypto:strong_rand_bytes(7))}},
+            {stateful, ProxyOptions}
+    end.
 
 stateless_request(Message, ProxyOptions) ->
     case ersip_proxy_common:request_validation(Message, ProxyOptions) of
@@ -97,3 +101,6 @@ stateful_request(Message, ProxyOptions) ->
         {error, Reason} ->
             lager:warning("Error occured during processing: ~p", [Reason])
     end.
+
+registrar_request(Message, RegistrarConfig) ->
+    erproxy_registrar:process_register(Message, RegistrarConfig).

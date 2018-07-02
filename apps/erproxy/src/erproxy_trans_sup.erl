@@ -22,10 +22,10 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-start_server_trans(TUCallback, Args) ->
+start_server_trans(TUCallback, {_SipMsg, _Options} = Args) ->
     {ok, _Pid} = supervisor:start_child(?MODULE, [server, TUCallback, Args]).
 
-start_client_trans(TUCallback, Args) ->
+start_client_trans(TUCallback, {_SipMsg, _Options} = Args) ->
     {ok, _Pid} = supervisor:start_child(?MODULE, [client, TUCallback, Args]).
 
 %%====================================================================

@@ -179,4 +179,15 @@ pass_message(SipMsg, ProxyOptions) ->
     ersip_request:new(SipMsg2, Branch, NexthopURI).
 
 stateful_target(SipMsg) ->
-    ersip_sipmsg:ruri(SipMsg).
+    URI = ersip_sipmsg:ruri(SipMsg),
+    AOR = ersip_uri:make_key(URI),
+    lager:info("Looking up for AOR: ~p", [AOR]),
+    case erproxy_locationdb:lookup(AOR) of
+        {ok, [Binding1|_]} ->
+            lager:info("Found binding: ~p", [Binding1]),
+            Contact = ersip_registrar_binding:contact(Binding1),
+            ersip_hdr_contact:uri(Contact);
+        {ok, []} ->
+            lager:info("Binding not found", []),
+            URI
+    end.

@@ -35,9 +35,12 @@ init([]) ->
      },
     Supervisors = [erproxy_listener_sup,
                    erproxy_trans_sup,
-                   erproxy_stateful_sup
+                   erproxy_stateful_sup,
+                   erproxy_registrar_sup
                   ],
-    Servers = [{erproxy_branch, []}],
+    Servers = [{erproxy_branch, []},
+               {erproxy_locationdb, []}
+              ],
     SupSpecs = [#{id    => Module,
                   start => {Module, start_link, []},
                   type  => supervisor
