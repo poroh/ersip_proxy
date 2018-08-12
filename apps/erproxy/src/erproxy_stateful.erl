@@ -115,7 +115,7 @@ handle_call(cancel, _From, #state{server = Pid, outreq = undefined, sipmsg = Req
     {stop, normal, ok, State};
 handle_call(cancel, _From, #state{outreq = OutReq} = State) ->
     lager:info("Canceling request", []),
-    CancelReq = ersip_method_cancel:generate(OutReq),
+    CancelReq = ersip_request_cancel:generate(OutReq),
     start_cancel_trans(CancelReq, State),
     {reply, ok, State};
 handle_call(Request, _From, State) ->
