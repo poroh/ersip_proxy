@@ -34,7 +34,9 @@ process_request(Message) ->
         {stateless, ProxyOptions} ->
             stateless_request(Message, ProxyOptions);
         {stateful, ProxyOptions} ->
-            stateful_request(Message, ProxyOptions)
+            stateful_request(Message, ProxyOptions);
+        {stateful_cancel, ProxyOptions} ->
+            stateful_cancel_request(Message, ProxyOptions)
     end.
 
 process_response(RecvVia, Message) ->
@@ -49,10 +51,14 @@ process_response(RecvVia, Message) ->
 
 processing_type(Message) ->
     REGISTER = ersip_method:register(),
+    CANCEL   = ersip_method:cancel(),
     case ersip_msg:get(method, Message) of
         REGISTER ->
             RegistrarConfig = ersip_registrar:new_config(any, #{}),
             {registrar, RegistrarConfig};
+        CANCEL ->
+            ProxyOptions = #{to_tag => {tag, ersip_id:token(crypto:strong_rand_bytes(7))}},
+            {stateful_cancel, ProxyOptions};
         _ ->
             ProxyOptions = #{to_tag => {tag, ersip_id:token(crypto:strong_rand_bytes(7))}},
             {stateful, ProxyOptions}
@@ -100,6 +106,14 @@ stateful_request(Message, ProxyOptions) ->
                        end);
         {error, Reason} ->
             lager:warning("Error occured during processing: ~p", [Reason])
+    end.
+
+stateful_cancel_request(Message, ProxyOptions) ->
+    case erproxy_cancel_uas:process_cancel(Message) of
+        ok ->
+            ok;
+        process_stateless ->
+            stateless_request(Message, ProxyOptions)
     end.
 
 registrar_request(Message, RegistrarConfig) ->

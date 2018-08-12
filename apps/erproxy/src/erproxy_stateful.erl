@@ -12,8 +12,9 @@
 
 -export([request/2,
          response/2,
-         server_trans_result/3,
+         server_trans_result/2,
          client_trans_result/2,
+         cancel_trans_result/2,
          start_link/2
         ]).
 
@@ -29,7 +30,9 @@
                 server_ref    :: reference(), %% Server transaction monitor reference
                 client        :: pid(),       %% Client transaction
                 client_ref    :: reference(), %% Client transaction monitor reference
-                sipmsg        :: ersip_sipmsg:sipmsg()
+                sipmsg        :: ersip_sipmsg:sipmsg(),
+                outreq        :: ersip_request:request(),
+                options       :: ersip_proxy:params()
                }).
 
 %%%===================================================================
@@ -67,10 +70,17 @@ response(RecvVia, Message) ->
             Error
     end.
 
-server_trans_result(no_ack, _, Pid) ->
+server_trans_result(no_ack, Pid) ->
     gen_server:cast(Pid, server_no_ack);
-server_trans_result(SipMsg, ProxyOptions, Pid) ->
-    gen_server:cast(Pid, {request, SipMsg, ProxyOptions}).
+server_trans_result(cancel, Pid) ->
+    try
+        gen_server:call(Pid, cancel)
+    catch
+        exit:{noproc, _} ->
+            {error, noproc}
+    end;
+server_trans_result(SipMsg, Pid) ->
+    gen_server:cast(Pid, {request, SipMsg}).
 
 client_trans_result(timeout, Pid) ->
     lager:info("Client transaction timeout", []),
@@ -78,6 +88,13 @@ client_trans_result(timeout, Pid) ->
 client_trans_result(SipMsg, Pid) ->
     lager:info("Client transaction result", []),
     gen_server:cast(Pid, {response, SipMsg}).
+
+cancel_trans_result(timeout, Pid) ->
+    lager:info("Cancel transaction timeout", []),
+    gen_server:cast(Pid, cancel_timeout);
+cancel_trans_result(SipMsg, Pid) ->
+    lager:info("Cancel transaction result", []),
+    gen_server:cast(Pid, {cancel_response, SipMsg}).
 
 start_link(Message, ProxyOptions) ->
     gen_server:start_link(?MODULE, [Message, ProxyOptions], []).
@@ -87,16 +104,26 @@ start_link(Message, ProxyOptions) ->
 %%%===================================================================
 
 init([{sipmsg, SipMsg}, {options, ProxyOptions}]) ->
-    lager:info("new stateful proxy process started", []),
-    gen_server:cast(self(), {start, SipMsg, ProxyOptions}),
-    {ok, #state{sipmsg = SipMsg}}.
+    lager:info("New stateful proxy process started", []),
+    gen_server:cast(self(), start),
+    {ok, #state{sipmsg = SipMsg, options = ProxyOptions}}.
 
+handle_call(cancel, _From, #state{server = Pid, outreq = undefined, sipmsg = Req} = State) ->
+    lager:info("Canceling request before it passed through proxy", []),
+    SipMsg = ersip_sipmsg:reply(487, Req),
+    erproxy_trans:send_response(SipMsg, Pid),
+    {stop, normal, ok, State};
+handle_call(cancel, _From, #state{outreq = OutReq} = State) ->
+    lager:info("Canceling request", []),
+    CancelReq = ersip_method_cancel:generate(OutReq),
+    start_cancel_trans(CancelReq, State),
+    {reply, ok, State};
 handle_call(Request, _From, State) ->
     lager:error("Unexpected call ~p", [Request]),
     Reply = ok,
     {reply, Reply, State}.
 
-handle_cast({start, SipMsg, ProxyOptions}, State) ->
+handle_cast(start, #state{sipmsg = SipMsg, options = ProxyOptions} = State) ->
     ACK = ersip_method:ack(),
     case ersip_sipmsg:method(SipMsg) of
         ACK ->
@@ -107,14 +134,15 @@ handle_cast({start, SipMsg, ProxyOptions}, State) ->
             erproxy_conn:send_request(OutReq),
             {stop, normal, SipMsg};
         _ ->
-            State1 = start_server_trans(SipMsg, ProxyOptions, State),
+            State1 = start_server_trans(SipMsg, State),
             {noreply, State1}
     end;
-handle_cast({request, SipMsg, ProxyOptions}, State) ->
+handle_cast({request, SipMsg}, #state{options = ProxyOptions} = State) ->
     %% Pass message through the proxy
     OutReq = pass_message(SipMsg, ProxyOptions),
-    State1 = start_client_trans(OutReq, ProxyOptions, State),
-    {noreply, State1};
+    State1 = start_client_trans(OutReq, State),
+    State2 = State1#state{outreq = OutReq},
+    {noreply, State2};
 handle_cast({response, SipMsg}, #state{server = Pid} = State) ->
     lager:info("Sending response to the request intiator", []),
     erproxy_trans:send_response(SipMsg, Pid),
@@ -130,6 +158,9 @@ handle_cast(client_timeout, #state{server = Pid, sipmsg = Req} = State) ->
     %% treated as if a 408 (Request Timeout) status code has been received.
     SipMsg = ersip_sipmsg:reply(408, Req),
     erproxy_trans:send_response(SipMsg, Pid),
+    {noreply, State};
+handle_cast({cancel_response, SipMsg}, #state{} = State) ->
+    lager:info("Cancel response received ~p", [ersip_sipmsg:status(SipMsg)]),
     {noreply, State};
 handle_cast(Request, State) ->
     lager:error("Unexpected cast ~p", [Request]),
@@ -154,19 +185,23 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal implementation
 %%%===================================================================
 
-start_server_trans(SipMsg, ProxyOptions, #state{} = State) ->
-    TUMFA = {?MODULE, server_trans_result, [ProxyOptions, self()]},
+start_server_trans(SipMsg, #state{options = ProxyOptions} = State) ->
+    TUMFA = {?MODULE, server_trans_result, [self()]},
     %% Creating server transaction:
     {ok, Pid} = erproxy_trans_sup:start_server_trans(TUMFA, {SipMsg, ProxyOptions}),
     Ref = erlang:monitor(process, Pid),
     State#state{server = Pid, server_ref = Ref}.
 
-start_client_trans(OutReq, ProxyOptions, State) ->
+start_client_trans(OutReq, #state{options = ProxyOptions} = State) ->
     TUMFA = {?MODULE, client_trans_result, [self()]},
-    %% Creating server transaction:
     {ok, Pid} = erproxy_trans_sup:start_client_trans(TUMFA, {OutReq, ProxyOptions}),
     Ref = erlang:monitor(process, Pid),
     State#state{client = Pid, client_ref = Ref}.
+
+start_cancel_trans(OutReq, #state{options = ProxyOptions}) ->
+    TUMFA = {?MODULE, cancel_trans_result, [self()]},
+    {ok, Pid} = erproxy_trans_sup:start_client_trans(TUMFA, {OutReq, ProxyOptions}),
+    lager:info("Started cancel transaction with pid: ~p", [Pid]).
 
 pass_message(SipMsg, ProxyOptions) ->
     %% Pass message through the proxy

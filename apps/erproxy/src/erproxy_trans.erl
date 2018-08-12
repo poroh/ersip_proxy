@@ -12,10 +12,12 @@
 
 -export([start_link/3,
          find_server_trans/1,
+         find_server_cancel_trans/1,
          find_client_trans/2,
          recv_request/2,
          recv_response/2,
-         send_response/2
+         send_response/2,
+         cancel_request/1
         ]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
@@ -38,16 +40,34 @@ start_link(Type, TUCallback, Args) ->
     gen_server:start_link({global, {?MODULE, Id}}, ?MODULE, [State, SE], []).
 
 recv_request(InSipMsg, Pid) ->
-    gen_server:call(Pid, {received, InSipMsg}).
+    gen_server:cast(Pid, {received, InSipMsg}).
 
 recv_response(SipMsg, Pid) ->
-    gen_server:call(Pid, {received, SipMsg}).
+    gen_server:cast(Pid, {received, SipMsg}).
 
 send_response(SipMsg, Pid) ->
-    gen_server:call(Pid, {send, SipMsg}).
+    gen_server:cast(Pid, {send, SipMsg}).
+
+-spec cancel_request(pid()) -> ok | {error, no_request}.
+cancel_request(Pid) ->
+    try
+        gen_server:call(Pid, cancel_request)
+    catch
+        exit:{noproc, _} ->
+            {error, no_request}
+    end.
 
 find_server_trans(InSipMsg) ->
     TransId = ersip_trans:server_id(InSipMsg),
+    case global:whereis_name({?MODULE, TransId}) of
+        undefined ->
+            error;
+        Pid when is_pid(Pid) ->
+            {ok, Pid}
+    end.
+
+find_server_cancel_trans(CancelSipMsg) ->
+    TransId = ersip_trans:server_cancel_id(CancelSipMsg),
     case global:whereis_name({?MODULE, TransId}) of
         undefined ->
             error;
@@ -76,23 +96,30 @@ init([State, SE]) ->
             {stop, normal}
     end.
 
-handle_call({received, _SipMsg} = Ev, _From, #state{trans = Trans} = State) ->
-    {NewTrans, SE} = ersip_trans:event(Ev, Trans),
-    cast_se(SE),
-    {reply, ok, State#state{trans = NewTrans}};
-handle_call({send, _SipMsg} = Ev, _From, #state{trans = Trans} = State) ->
-    {NewTrans, SE} = ersip_trans:event(Ev, Trans),
-    case process_se_list(SE, State#state{trans = NewTrans}) of
-        {noreply, State1} ->
-            {reply, ok, State1};
-        {stop, State1} ->
-            {stop, normal, ok, State1}
+handle_call(cancel_request, _From, #state{tu_callback = CB} = State) ->
+    case call_callback(CB, [cancel]) of
+        ok ->
+            {reply, ok, State};
+        {error, noproc} ->
+            {reply, {error, no_request}, State}
     end;
 handle_call(Request, _From, State) ->
     lager:error("Unexpected call ~p", [Request]),
     Reply = ok,
     {reply, Reply, State}.
 
+handle_cast({received, _SipMsg} = Ev, #state{trans = Trans} = State) ->
+    {NewTrans, SE} = ersip_trans:event(Ev, Trans),
+    cast_se(SE),
+    {noreply, State#state{trans = NewTrans}};
+handle_cast({send, _SipMsg} = Ev, #state{trans = Trans} = State) ->
+    {NewTrans, SE} = ersip_trans:event(Ev, Trans),
+    case process_se_list(SE, State#state{trans = NewTrans}) of
+        {noreply, State1} ->
+            {noreply, State1};
+        {stop, State1} ->
+            {stop, normal, ok, State1}
+    end;
 handle_cast({process_se, SEList}, State) ->
     process_se_list(SEList, State);
 handle_cast(Request, State) ->
