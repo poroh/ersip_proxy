@@ -57,10 +57,20 @@ processing_type(Message) ->
             RegistrarConfig = ersip_registrar:new_config(any, #{}),
             {registrar, RegistrarConfig};
         CANCEL ->
-            ProxyOptions = #{to_tag => {tag, ersip_id:token(crypto:strong_rand_bytes(7))}},
+            ProxyOptions = #{to_tag => {tag, ersip_id:token(crypto:strong_rand_bytes(7))},
+                             record_route_uri => erproxy_listener:uri(),
+                             check_rroute_fun => fun(_) -> true end
+                            },
             {stateful_cancel, ProxyOptions};
         _ ->
-            ProxyOptions = #{to_tag => {tag, ersip_id:token(crypto:strong_rand_bytes(7))}},
+            ProxyOptions = #{to_tag => {tag, ersip_id:token(crypto:strong_rand_bytes(7))},
+                             record_route_uri => erproxy_listener:uri(),
+                             check_rroute_fun =>
+                                 fun(CheckURI) ->
+                                         MyURI  = erproxy_listener:uri(),
+                                         uri_transport_equal(CheckURI, MyURI)
+                                 end
+                            },
             {stateful, ProxyOptions}
     end.
 
@@ -118,3 +128,20 @@ stateful_cancel_request(Message, ProxyOptions) ->
 
 registrar_request(Message, RegistrarConfig) ->
     erproxy_registrar:process_register(Message, RegistrarConfig).
+
+
+uri_transport_equal(URI1, URI2) ->
+    uri_transport(URI1) == uri_transport(URI2).
+
+uri_transport(URI) ->
+    {host, Host} = ersip_uri:get(host, URI),
+    {port, Port} = ersip_uri:get(port, URI),
+    Transport =
+        case ersip_uri:params(URI) of
+            #{transport := T} ->
+                T;
+            _ ->
+                ersip_transport:make(udp)
+        end,
+    {ersip_host:make_key(Host), Port, Transport}.
+

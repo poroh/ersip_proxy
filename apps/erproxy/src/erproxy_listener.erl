@@ -10,7 +10,9 @@
 
 -behaviour(gen_server).
 
--export([start_link/1]).
+-export([start_link/1,
+         uri/0
+        ]).
 
 -export([init/1,
          handle_call/3,
@@ -27,15 +29,19 @@
 %%====================================================================
 
 -record(state, {listen_id,
-                config}).
+                config,
+                uri
+               }).
 
 %%====================================================================
 %% API functions
 %%====================================================================
 
 start_link(Config) ->
-    gen_server:start_link(?MODULE, Config, []).
+    gen_server:start_link({local, ?MODULE}, ?MODULE, Config, []).
 
+uri() ->
+    gen_server:call(?MODULE, get_uri).
 
 %%====================================================================
 %% gen_server callbacks
@@ -59,11 +65,16 @@ init(Config) ->
             class => ersip,
             ws_proto => <<"sip">>
            }),
+    URI0 = ersip_uri:make([{host, ersip_host:make(list_to_binary(Address))}, {port, Port}]),
+    URI1 = ersip_uri:set_param(transport, ersip_transport:make(Transport), URI0),
     State = #state{listen_id = ListenId,
-                   config = Config
+                   config = Config,
+                   uri    = URI1
                   },
     {ok, State}.
 
+handle_call(get_uri, _, #state{uri = URI} = State) ->
+    {reply, URI, State};
 handle_call(Request, _, State) ->
     lagger:error("Unexpected call: ~p", [Request]),
     {reply, ok, State}.
