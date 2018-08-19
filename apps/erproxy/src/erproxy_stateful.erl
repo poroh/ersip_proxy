@@ -12,41 +12,41 @@
 
 -export([request/2,
          response/2,
-         server_trans_result/2,
-         client_trans_result/2,
-         cancel_trans_result/2,
+         trans_result/3,
          start_link/2
         ]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
-
 %%%===================================================================
 %%% Types
 %%%===================================================================
 
--record(state, {server        :: pid(),       %% Server transaction
-                server_ref    :: reference(), %% Server transaction monitor reference
-                client        :: pid(),       %% Client transaction
-                client_ref    :: reference(), %% Client transaction monitor reference
-                sipmsg        :: ersip_sipmsg:sipmsg(),
-                outreq        :: ersip_request:request(),
-                options       :: ersip_proxy:params()
+-record(state, {proxy       :: ersip_proxy:stateful(),
+                trans = #{} :: #{term() => pid()},
+                sip_options :: ersip:sip_options()
                }).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
-request(SipMsg, ProxyOptions) ->
+request(SipMsg, Options) ->
     %% First looking if SipMsg match any transaction
     case erproxy_trans:find_server_trans(SipMsg) of
         error ->
             %% If transaction has not been found start new stateful proxy process.
-            lager:info("Transaction is not found creating new proxy process", []),
-            erproxy_stateful_sup:start_proxy({sipmsg, SipMsg}, {options, ProxyOptions});
-
+            ACK = ersip_method:ack(),
+            case ersip_sipmsg:method(SipMsg) of
+                ACK ->
+                    lager:info("ACK method does not match any transaction: process stateless", []),
+                    process_stateless;
+                _ ->
+                    lager:info("Transaction is not found creating new proxy process", []),
+                    {ok, _} = erproxy_stateful_sup:start_proxy({sipmsg, SipMsg}, {options, Options}),
+                    ok
+            end;
         {ok, Trans} ->
             %% If transaction is found then pass request to the
             %% transaction
@@ -70,31 +70,21 @@ response(RecvVia, Message) ->
             Error
     end.
 
-server_trans_result(no_ack, Pid) ->
-    gen_server:cast(Pid, server_no_ack);
-server_trans_result(cancel, Pid) ->
+trans_result(no_ack, _Id, _Pid) ->
+    %% just ignore...
+    ok;
+trans_result(timeout, Id, Pid) ->
+    gen_server:cast(Pid, {trans_result, Id, timeout});
+trans_result(cancel, _Id, Pid) ->
     try
         gen_server:call(Pid, cancel)
     catch
         exit:{noproc, _} ->
             {error, noproc}
     end;
-server_trans_result(SipMsg, Pid) ->
-    gen_server:cast(Pid, {request, SipMsg}).
-
-client_trans_result(timeout, Pid) ->
-    lager:info("Client transaction timeout", []),
-    gen_server:cast(Pid, client_timeout);
-client_trans_result(SipMsg, Pid) ->
-    lager:info("Client transaction result", []),
-    gen_server:cast(Pid, {response, SipMsg}).
-
-cancel_trans_result(timeout, Pid) ->
-    lager:info("Cancel transaction timeout", []),
-    gen_server:cast(Pid, cancel_timeout);
-cancel_trans_result(SipMsg, Pid) ->
-    lager:info("Cancel transaction result", []),
-    gen_server:cast(Pid, {cancel_response, SipMsg}).
+trans_result(SipMsg, Id, Pid) ->
+    lager:info("Transaction ~p result", [Id]),
+    gen_server:cast(Pid, {trans_result, Id, SipMsg}).
 
 start_link(Message, ProxyOptions) ->
     gen_server:start_link(?MODULE, [Message, ProxyOptions], []).
@@ -103,75 +93,61 @@ start_link(Message, ProxyOptions) ->
 %%% gen_server callbacks
 %%%===================================================================
 
-init([{sipmsg, SipMsg}, {options, ProxyOptions}]) ->
+init([{sipmsg, SipMsg}, {options, Options}]) ->
     lager:info("New stateful proxy process started", []),
-    gen_server:cast(self(), start),
-    {ok, #state{sipmsg = SipMsg, options = ProxyOptions}}.
+    ProxyOptions = maps:get(proxy, Options, #{}),
+    SIPOptions   = maps:get(sip, Options, #{}),
+    {Stateful, SE} = ersip_proxy:new_stateful(SipMsg, ProxyOptions),
+    State = #state{proxy = Stateful,
+                   sip_options = SIPOptions},
+    gen_server:cast(self(), {process_se, SE}),
+    {ok, State}.
 
-handle_call(cancel, _From, #state{server = Pid, outreq = undefined, sipmsg = Req} = State) ->
-    lager:info("Canceling request before it passed through proxy", []),
-    SipMsg = ersip_sipmsg:reply(487, Req),
-    erproxy_trans:send_response(SipMsg, Pid),
-    {stop, normal, ok, State};
-handle_call(cancel, _From, #state{outreq = OutReq} = State) ->
+handle_call(cancel, _From, #state{proxy = Stateful0} = State) ->
     lager:info("Canceling request", []),
-    CancelReq = ersip_request_cancel:generate(OutReq),
-    start_cancel_trans(CancelReq, State),
-    {reply, ok, State};
+    {Stateful, SE} = ersip_proxy:cancel(Stateful0),
+    case process_se(SE, State#state{proxy = Stateful}) of
+        stop ->
+            {stop, normal, ok, State};
+        {continue, State1} ->
+            {reply, ok, State1}
+    end;
 handle_call(Request, _From, State) ->
     lager:error("Unexpected call ~p", [Request]),
     Reply = ok,
     {reply, Reply, State}.
 
-handle_cast(start, #state{sipmsg = SipMsg, options = ProxyOptions} = State) ->
-    ACK = ersip_method:ack(),
-    case ersip_sipmsg:method(SipMsg) of
-        ACK ->
-            %% There is no client transaction for ACK.  If the TU
-            %% wishes to send an ACK, it passes one directly to the
-            %% transport layer for transmission.
-            OutReq = pass_message(SipMsg, ProxyOptions),
-            erproxy_conn:send_request(OutReq),
-            {stop, normal, SipMsg};
-        _ ->
-            State1 = start_server_trans(SipMsg, State),
+handle_cast({trans_result, Id, Result}, #state{proxy = Stateful0} = State) ->
+    %% Pass message through the proxy
+    lager:info("Proxy: Transaction ~p result", [Id]),
+    {Stateful, SE} = ersip_proxy:trans_result(Id, Result, Stateful0),
+    case process_se(SE, State#state{proxy = Stateful}) of
+        stop ->
+            {stop, normal, State};
+        {continue, State1} ->
             {noreply, State1}
     end;
-handle_cast({request, SipMsg}, #state{options = ProxyOptions} = State) ->
-    %% Pass message through the proxy
-    OutReq = pass_message(SipMsg, ProxyOptions),
-    State1 = start_client_trans(OutReq, State),
-    State2 = State1#state{outreq = OutReq},
-    {noreply, State2};
-handle_cast({response, SipMsg}, #state{server = Pid} = State) ->
-    lager:info("Sending response to the request intiator", []),
-    erproxy_trans:send_response(SipMsg, Pid),
-    {noreply, State};
-handle_cast(server_no_ack, #state{} = State) ->
-    lager:info("No ACK received by server transaction", []),
-    {stop, State};
-handle_cast(client_timeout, #state{server = Pid, sipmsg = Req} = State) ->
-    lager:info("Sending response to the request intiator", []),
-    %%   In some cases, the response returned by the transaction layer will
-    %% not be a SIP message, but rather a transaction layer error.  When a
-    %% timeout error is received from the transaction layer, it MUST be
-    %% treated as if a 408 (Request Timeout) status code has been received.
-    SipMsg = ersip_sipmsg:reply(408, Req),
-    erproxy_trans:send_response(SipMsg, Pid),
-    {noreply, State};
-handle_cast({cancel_response, SipMsg}, #state{} = State) ->
-    lager:info("Cancel response received ~p", [ersip_sipmsg:status(SipMsg)]),
-    {noreply, State};
+handle_cast({process_se, SE}, #state{} = State) ->
+    case process_se(SE, State) of
+        stop ->
+            {stop, normal, State};
+        {continue, State1} ->
+            {noreply, State1}
+    end;
 handle_cast(Request, State) ->
-    lager:error("Unexpected cast ~p", [Request]),
+    lager:error("Proxy: Unexpected cast ~p ~p", [Request, State]),
     {noreply, State}.
 
-handle_info({'DOWN', Ref, process, _, _}, #state{server_ref = Ref} = State) ->
-    {noreply, State};
-handle_info({'DOWN', Ref, process, _, _}, #state{client_ref = Ref} = State) ->
-    {stop, normal, State};
+handle_info({event, TimerEvent}, #state{proxy = Stateful} = State) ->
+    {Stateful1, SE} = ersip_proxy:timer_fired(TimerEvent, Stateful),
+    case process_se(SE, State#state{proxy = Stateful1}) of
+        stop ->
+            {stop, normal, State};
+        {continue, State1} ->
+            {noreply, State1}
+    end;
 handle_info(Info, State) ->
-    lager:error("Unexpected info ~p", [Info]),
+    lager:error("Proxy: Unexpected info ~p", [Info]),
     {noreply, State}.
 
 terminate(Reason, _State) ->
@@ -185,44 +161,53 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal implementation
 %%%===================================================================
 
-start_server_trans(SipMsg, #state{options = ProxyOptions} = State) ->
-    TUMFA = {?MODULE, server_trans_result, [self()]},
-    %% Creating server transaction:
-    {ok, Pid} = erproxy_trans_sup:start_server_trans(TUMFA, {SipMsg, ProxyOptions}),
-    Ref = erlang:monitor(process, Pid),
-    State#state{server = Pid, server_ref = Ref}.
+process_se([], State) ->
+    {continue, State};
+process_se([{create_trans, {Type, Id, OutReq}} | Rest], #state{trans = T, sip_options = SIPOptions} = State) ->
+    TUMFA = {?MODULE, trans_result, [Id, self()]},
+    {ok, Pid} =
+        case Type of
+            client ->
+                erproxy_trans_sup:start_client_trans(TUMFA, {OutReq, SIPOptions});
+            server ->
+                erproxy_trans_sup:start_server_trans(TUMFA, {OutReq, SIPOptions})
+        end,
+    process_se(Rest, State#state{trans = T#{Id => Pid}});
+process_se([{response, {TransId, SipMsg}} | Rest], #state{trans = T} = State) ->
+    #{TransId := Pid} = T,
+    erproxy_trans:send_response(SipMsg, Pid),
+    process_se(Rest, State);
+process_se([{select_target, RURI} | Rest], #state{proxy = Stateful} = State) ->
+    Targets = stateful_target(RURI),
+    {Stateful1, SE} = ersip_proxy:forward_to(Targets, Stateful),
+    State1 = State#state{proxy = Stateful1},
+    process_se(Rest ++ SE, State1);
+process_se([{set_timer, {Timeout, TimerEvent}} | Rest], #state{} = State) ->
+    erlang:send_after(Timeout, self(), {event, TimerEvent}),
+    process_se(Rest, State);
+process_se([{stop, _}|_], #state{}) ->
+    stop.
 
-start_client_trans(OutReq, #state{options = ProxyOptions} = State) ->
-    TUMFA = {?MODULE, client_trans_result, [self()]},
-    {ok, Pid} = erproxy_trans_sup:start_client_trans(TUMFA, {OutReq, ProxyOptions}),
-    Ref = erlang:monitor(process, Pid),
-    State#state{client = Pid, client_ref = Ref}.
+stateful_target(RURI) ->
+    DomainType =
+        case erproxy_domain:is_own(RURI) of
+            true ->
+                home;
+            false ->
+                foreign
+        end,
+    stateful_target(RURI, DomainType).
 
-start_cancel_trans(OutReq, #state{options = ProxyOptions}) ->
-    TUMFA = {?MODULE, cancel_trans_result, [self()]},
-    {ok, Pid} = erproxy_trans_sup:start_client_trans(TUMFA, {OutReq, ProxyOptions}),
-    lager:info("Started cancel transaction with pid: ~p", [Pid]).
-
-pass_message(SipMsg, ProxyOptions) ->
-    %% Pass message through the proxy
-    SipMsg1 = ersip_proxy_common:process_route_info(SipMsg, ProxyOptions),
-    Target = stateful_target(SipMsg1),
-    lager:info("Forward message to target: ~s", [ersip_uri:assemble(Target)]),
-    {SipMsg2, #{nexthop := NexthopURI}} = ersip_proxy_common:forward_request(Target, SipMsg1, ProxyOptions),
-    lager:info("Nexthop is: ~s", [ersip_uri:assemble(NexthopURI)]),
-    Branch = erproxy_branch:generate(),
-    ersip_request:new(SipMsg2, Branch, NexthopURI).
-
-stateful_target(SipMsg) ->
-    URI = ersip_sipmsg:ruri(SipMsg),
-    AOR = ersip_uri:make_key(URI),
+stateful_target(RURI, foreign) ->
+    lager:info("Forward to foreign domain: ~s", [ersip_uri:assemble(RURI)]),
+    [RURI];
+stateful_target(RURI, home) ->
+    AOR = ersip_uri:make_key(RURI),
     lager:info("Looking up for AOR: ~p", [AOR]),
-    case erproxy_locationdb:lookup(AOR) of
-        {ok, [Binding1|_]} ->
-            lager:info("Found binding: ~p", [Binding1]),
-            Contact = ersip_registrar_binding:contact(Binding1),
-            ersip_hdr_contact:uri(Contact);
-        {ok, []} ->
-            lager:info("Binding not found", []),
-            URI
-    end.
+    {ok, Bindings} = erproxy_locationdb:lookup(AOR),
+    lager:info("Found bindings: ~p", [Bindings]),
+    [begin
+         Contact = ersip_registrar_binding:contact(Binding),
+         ersip_hdr_contact:uri(Contact)
+     end
+     || Binding <- Bindings].

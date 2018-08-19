@@ -31,12 +31,12 @@ process_request(Message) ->
     case processing_type(Message) of
         {registrar, RegistrarConfig} ->
             registrar_request(Message, RegistrarConfig);
-        {stateless, ProxyOptions} ->
-            stateless_request(Message, ProxyOptions);
-        {stateful, ProxyOptions} ->
-            stateful_request(Message, ProxyOptions);
-        {stateful_cancel, ProxyOptions} ->
-            stateful_cancel_request(Message, ProxyOptions)
+        {stateless, Options} ->
+            stateless_request(Message, Options);
+        {stateful, Options} ->
+            stateful_request(Message, Options);
+        {stateful_cancel, Options} ->
+            stateful_cancel_request(Message, Options)
     end.
 
 process_response(RecvVia, Message) ->
@@ -50,6 +50,10 @@ process_response(RecvVia, Message) ->
     end.
 
 processing_type(Message) ->
+    ProxyOptions = #{to_tag => {tag, ersip_id:token(crypto:strong_rand_bytes(7))},
+                     record_route_uri => erproxy_listener:uri(),
+                     check_rroute_fun => fun erproxy_domain:is_own/1
+                    },
     REGISTER = ersip_method:register(),
     CANCEL   = ersip_method:cancel(),
     case ersip_msg:get(method, Message) of
@@ -57,27 +61,16 @@ processing_type(Message) ->
             RegistrarConfig = ersip_registrar:new_config(any, #{}),
             {registrar, RegistrarConfig};
         CANCEL ->
-            ProxyOptions = #{to_tag => {tag, ersip_id:token(crypto:strong_rand_bytes(7))},
-                             record_route_uri => erproxy_listener:uri(),
-                             check_rroute_fun => fun(_) -> true end
-                            },
-            {stateful_cancel, ProxyOptions};
+            {stateful_cancel, #{proxy => ProxyOptions}};
         _ ->
-            ProxyOptions = #{to_tag => {tag, ersip_id:token(crypto:strong_rand_bytes(7))},
-                             record_route_uri => erproxy_listener:uri(),
-                             check_rroute_fun =>
-                                 fun(CheckURI) ->
-                                         MyURI  = erproxy_listener:uri(),
-                                         uri_transport_equal(CheckURI, MyURI)
-                                 end
-                            },
-            {stateful, ProxyOptions}
+            {stateful, #{proxy => ProxyOptions}}
     end.
 
-stateless_request(Message, ProxyOptions) ->
-    case ersip_proxy_common:request_validation(Message, ProxyOptions) of
+stateless_request(Message, Options) ->
+    ProxyOptions = maps:get(proxy, Options, #{}),
+    case ersip_proxy_common:request_validation(Message, Options) of
         {ok, SipMsg} ->
-            SipMsg1 = ersip_proxy_common:process_route_info(SipMsg, ProxyOptions),
+            SipMsg1 = ersip_proxy_common:process_route_info(SipMsg, Options),
             Target = stateless_target(SipMsg1),
             lager:info("Forward message to target: ~s", [ersip_uri:assemble(Target)]),
             {SipMsg2, #{nexthop := NexthopURI}} = ersip_proxy_common:forward_request(Target, SipMsg1, ProxyOptions),
@@ -105,10 +98,15 @@ stateless_target(SipMsg) ->
     ersip_sipmsg:ruri(SipMsg).
 
 
-stateful_request(Message, ProxyOptions) ->
-    case ersip_proxy_common:request_validation(Message, ProxyOptions) of
+stateful_request(Message, Options) ->
+    case ersip_proxy_common:request_validation(Message, Options) of
         {ok, SipMsg} ->
-            erproxy_stateful:request(SipMsg, ProxyOptions);
+            case erproxy_stateful:request(SipMsg, Options) of
+                ok ->
+                    ok;
+                process_stateless ->
+                    stateless_request(Message, Options)
+            end;
         {reply, SipMsg2} ->
             lager:info("Message reply ~p", [SipMsg2]),
             spawn_link(fun() ->
@@ -118,30 +116,16 @@ stateful_request(Message, ProxyOptions) ->
             lager:warning("Error occured during processing: ~p", [Reason])
     end.
 
-stateful_cancel_request(Message, ProxyOptions) ->
+stateful_cancel_request(Message, Options) ->
     case erproxy_cancel_uas:process_cancel(Message) of
         ok ->
             ok;
         process_stateless ->
-            stateless_request(Message, ProxyOptions)
+            stateless_request(Message, Options)
     end.
 
 registrar_request(Message, RegistrarConfig) ->
     erproxy_registrar:process_register(Message, RegistrarConfig).
 
 
-uri_transport_equal(URI1, URI2) ->
-    uri_transport(URI1) == uri_transport(URI2).
-
-uri_transport(URI) ->
-    {host, Host} = ersip_uri:get(host, URI),
-    {port, Port} = ersip_uri:get(port, URI),
-    Transport =
-        case ersip_uri:params(URI) of
-            #{transport := T} ->
-                T;
-            _ ->
-                ersip_transport:make(udp)
-        end,
-    {ersip_host:make_key(Host), Port, Transport}.
 
