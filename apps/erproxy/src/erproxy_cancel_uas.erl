@@ -25,30 +25,7 @@ process_cancel(Message) ->
                        end),
             ok;
         {process, SipMsg} ->
-            case erproxy_trans:find_server_trans(SipMsg) of
-                error ->
-                    %% If transaction has not been found:
-                    %% 1. find matching transaction for request from cancel:
-                    case erproxy_trans:find_server_cancel_trans(SipMsg) of
-                        {ok, Trans} ->
-                            %% If matched then start cancel transaction
-                            start_server_trans(SipMsg, Trans),
-                            ok;
-                        error ->
-                            %% If not matched then just act as stateless proxy in according to:
-                            %%
-                            %% If a response context is not found, the element does not have any
-                            %% knowledge of the request to apply the CANCEL to.  It MUST statelessly
-                            %% forward the CANCEL request (it may have statelessly forwarded the
-                            %% associated request previously).
-                            lager:info("Transaction is not found passing cancel as stateless proxy", []),
-                            process_stateless
-                    end;
-                {ok, Trans} ->
-                    %% If transaction is found then pass request to the
-                    %% transaction
-                    erproxy_trans:recv_request(SipMsg, Trans)
-            end;
+            do_process_cancel(SipMsg);
         {error, Error} ->
             lager:warning("Error occurred during CANCEL processing: ~p", [Error])
     end.
@@ -79,3 +56,34 @@ start_server_trans(SipMsg, TransToCancel) ->
     TUMFA = {?MODULE, trans_result, [TransToCancel]},
     %% Creating server transaction:
     {ok, _Pid} = erproxy_trans_sup:start_server_trans(TUMFA, {SipMsg, #{}}).
+
+do_process_cancel(SipMsg0) ->
+    case ersip_sipmsg:parse(SipMsg0, all_required) of
+        {ok, SipMsg} ->
+            case erproxy_trans:find_server_trans(SipMsg) of
+                error ->
+                    %% If transaction has not been found:
+                    %% 1. find matching transaction for request from cancel:
+                    case erproxy_trans:find_server_cancel_trans(SipMsg) of
+                        {ok, Trans} ->
+                            %% If matched then start cancel transaction
+                            start_server_trans(SipMsg, Trans),
+                            ok;
+                        error ->
+                            %% If not matched then just act as stateless proxy in according to:
+                            %%
+                            %% If a response context is not found, the element does not have any
+                            %% knowledge of the request to apply the CANCEL to.  It MUST statelessly
+                            %% forward the CANCEL request (it may have statelessly forwarded the
+                            %% associated request previously).
+                            lager:info("Transaction is not found passing cancel as stateless proxy", []),
+                            process_stateless
+                    end;
+                {ok, Trans} ->
+                    %% If transaction is found then pass request to the
+                    %% transaction
+                    erproxy_trans:recv_request(SipMsg, Trans)
+            end;
+        {error, _} = Error ->
+            lager:warning("cannot parse CANCEL sip message: ~p", [Error])
+    end.

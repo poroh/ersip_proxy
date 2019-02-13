@@ -100,12 +100,17 @@ stateless_target(SipMsg) ->
 
 stateful_request(Message, Options) ->
     case ersip_proxy_common:request_validation(Message, Options) of
-        {ok, SipMsg} ->
-            case erproxy_stateful:request(SipMsg, Options) of
-                ok ->
-                    ok;
-                process_stateless ->
-                    stateless_request(Message, Options)
+        {ok, SipMsg0} ->
+            case ersip_sipmsg:parse(SipMsg0, all_required) of
+                {ok, SipMsg} ->
+                    case erproxy_stateful:request(SipMsg, Options) of
+                        ok ->
+                            ok;
+                        process_stateless ->
+                            stateless_request(Message, Options)
+                    end;
+                {error, _} = Error ->
+                    lager:warning("cannot parse request: ~p", [Error])
             end;
         {reply, SipMsg2} ->
             lager:info("Message reply ~p", [SipMsg2]),

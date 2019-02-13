@@ -39,17 +39,22 @@ process_register(Message, RegistrarConfig) ->
             spawn_link(fun() ->
                                erproxy_conn:send_response(SipMsg)
                        end);
-        {process, SipMsg} ->
-            case erproxy_trans:find_server_trans(SipMsg) of
-                error ->
-                    %% If transaction has not been found start new stateful proxy process.
-                    lager:info("Transaction is not found creating new registrar request process", []),
-                    erproxy_registrar_sup:start_process({sipmsg, SipMsg}, {regconfig, RegistrarConfig});
-                {ok, Trans} ->
-                    %% If transaction is found then pass request to the
-                    %% transaction
-                    erproxy_trans:recv_request(SipMsg, Trans)
-            end;
+        {process, SipMsg0} ->
+            case ersip_sipmsg:parse(SipMsg0, all_required) of
+                {error, _} = Error ->
+                    lager:warning("Cannot parse request: ~p", [Error]);
+                {ok, SipMsg} ->
+                    case erproxy_trans:find_server_trans(SipMsg) of
+                        error ->
+                            %% If transaction has not been found start new stateful proxy process.
+                            lager:info("Transaction is not found creating new registrar request process", []),
+                            erproxy_registrar_sup:start_process({sipmsg, SipMsg}, {regconfig, RegistrarConfig});
+                        {ok, Trans} ->
+                            %% If transaction is found then pass request to the
+                            %% transaction
+                            erproxy_trans:recv_request(SipMsg, Trans)
+                    end
+                end;
         {error, Error} ->
             lager:warning("Error occurred during REGISTER processing: ~p", [Error])
     end.
