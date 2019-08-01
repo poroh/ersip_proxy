@@ -138,6 +138,19 @@ handle_cast(Request, State) ->
     lager:error("Proxy: Unexpected cast ~p ~p", [Request, State]),
     {noreply, State}.
 
+handle_info({'DOWN', _, process, Pid, _}, #state{trans = T, proxy = Stateful0} = State) ->
+    case T of
+        #{Pid := Id} ->
+            {Stateful, SE} = ersip_proxy:trans_finished(Id, Stateful0),
+            case process_se(SE, State#state{proxy = Stateful}) of
+                stop ->
+                    {stop, normal, State};
+                {continue, State1} ->
+                    {noreply, State1}
+            end;
+        _ ->
+            {noreply, State}
+    end;
 handle_info({event, TimerEvent}, #state{proxy = Stateful} = State) ->
     {Stateful1, SE} = ersip_proxy:timer_fired(TimerEvent, Stateful),
     case process_se(SE, State#state{proxy = Stateful1}) of
@@ -172,7 +185,7 @@ process_se([{create_trans, {Type, Id, OutReq}} | Rest], #state{trans = T, sip_op
             server ->
                 erproxy_trans_sup:start_server_trans(TUMFA, {OutReq, SIPOptions})
         end,
-    process_se(Rest, State#state{trans = T#{Id => Pid}});
+    process_se(Rest, State#state{trans = T#{Id => Pid, Pid => Id}});
 process_se([{response, {TransId, SipMsg}} | Rest], #state{trans = T} = State) ->
     #{TransId := Pid} = T,
     erproxy_trans:send_response(SipMsg, Pid),
